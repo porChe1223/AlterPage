@@ -1,6 +1,5 @@
 chainlit
 langchain
-langchian-community
 langgraph
 langchain-openai
 openai
