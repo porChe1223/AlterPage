@@ -15,11 +15,7 @@ from langchain.schema import Document
 from langchain.vectorstores import Chroma
 from dotenv import load_dotenv
 import os
-import time
-import random
 import matplotlib.pyplot as plt
-import langchain.vectorstores
-import logging
 import chainlit as cl
 import requests
 
@@ -27,10 +23,10 @@ import requests
 # LLMのAPIキー読み込み
 #========================
 load_dotenv()
-openai_api_key = os.getenv("OPENAI_API_KEY")
-openai_api_key2 = os.getenv("OPENAI_API_KEY2")
-openai_api_key3 = os.getenv("OPENAI_API_KEY3")
-openai_api_key4 = os.getenv("OPENAI_API_KEY4")
+openai_api_key = os.getenv("OPENAI_API_KEY_1")
+openai_api_key2 = os.getenv("OPENAI_API_KEY_2")
+openai_api_key3 = os.getenv("OPENAI_API_KEY_3")
+openai_api_key4 = os.getenv("OPENAI_API_KEY_4")
 
 #===================
 # LLMの呼び出し
@@ -63,7 +59,7 @@ urls = [
     "https://cosmosdbdatagetter.azurewebsites.net/data?group=サイト内検索関連情報",
     "https://cosmosdbdatagetter.azurewebsites.net/data?group=デバイスおよびユーザ属性関連情報",
     "https://cosmosdbdatagetter.azurewebsites.net/data?group=時間帯関連情報",
-    ]
+]
 
 
 ######################
@@ -94,9 +90,26 @@ def call_llm(llm, prompt):
     )
     return chain.invoke({})
 
+#===============
+# 最初の分類
+#===============
+def select_What_to_do(llm, user_prompt):
+    # プロンプトの作成
+    classification_prompt = PromptTemplate(
+        input_variables = ["user_prompt"],
+        template = txt_read("resource/sys_prompt/what_to_do.txt") + "\n\nプロンプト: {user_prompt}"
+    )
+    # チェーンの宣言
+    chain = (
+        classification_prompt
+        | llm
+    )
+    # チェーンの実行
+    return chain.invoke({"user_prompt": user_prompt})
+
 #========================================
 # 標準回答
-# - Alterboothのプロフェッショナルとして
+# - マーケティングのスペシャリストとして
 #========================================
 # 標準回答の関数
 def call_Others(llm, user_prompt):
@@ -223,6 +236,12 @@ def node_Start(state: State, config: RunnableConfig):
     # 入力されたメッセージをそのまま次に渡す
     return {"message": state["message"]}
 
+# 最初の動作を決めるノード
+def node_Select(state: State, config: RunnableConfig):
+    prompt = state["message"]
+    response = select_What_to_do(llm4, prompt)
+    return {"message_type": response.content, "messages": prompt}
+
 # 標準回答ノード
 def node_Others(state: State, config: RunnableConfig):
     prompt = state["message"]
@@ -308,6 +327,7 @@ graph_builder = StateGraph(State)
 # Nodeの追加
 #===============
 graph_builder.add_node("node_Start", node_Start)
+graph_builder.add_node("node_Select", node_Select)
 graph_builder.add_node("node_Others", node_Others)
 graph_builder.add_node("node_Review", node_Review)
 graph_builder.add_node("node_Main", node_Main)
@@ -322,32 +342,52 @@ graph_builder.add_node("node_DataGet_time", node_DataGet_time)
 graph_builder.add_node("node_Advice", node_Advice)
 graph_builder.add_node("node_End", node_End)
 
+#======================
+# ルーティングの設定
+#======================
+# # 標準回答 or プロンプト評価 or ブログ解析
+# def routing(state: State, config: RunnableConfig):
+#     if 'ブログ' in state['message']:
+#         logging.info(f"[DEBUG] Routing to node_Main")
+#         return "node_Main"
+    
+#     elif 'プロンプト' in state['message'] and '評価' in state['message']:
+#         logging.info(f"[DEBUG] Routing to node_Review")
+#         return "node_Review"
+    
+#     else:
+#         logging.info(f"[DEBUG] Routing to node_Others")
+#         return "node_Others"
+
 #===================
 # ワークフロー作成
 #===================
-# Graphの始点を宣言
+# Graphの始点
 graph_builder.set_entry_point("node_Start")
 
-# ルーティングの設定
-def routing(state: State, config: RunnableConfig):
-    if 'ブログ' in state['message']:
-        logging.info(f"[DEBUG] Routing to node_Main")
-        return "node_Main"
-    
-    elif 'プロンプト' in state['message'] and '評価' in state['message']:
-        logging.info(f"[DEBUG] Routing to node_Review")
-        return "node_Review"
-    
-    else:
-        logging.info(f"[DEBUG] Routing to node_Others")
-        return "node_Others"
-
-# 条件分岐のエッジを追加
-graph_builder.add_conditional_edges( # 条件分岐のエッジを追加
-    'node_Start',
-    routing, # 作ったルーティング
+# 始点　＝＞　標準回答 or プロンプト評価 or ブログ解析
+graph_builder.add_conditional_edges(
+    "node_Select",
+    lambda state: state["message_type"],
+    {
+        "Do01": "node_Others",
+        "Do02": "node_Review",
+        "Do03": "node_Main",
+    },
 )
+# # 条件分岐のエッジを追加
+# graph_builder.add_conditional_edges( # 条件分岐のエッジを追加
+#     'node_Start',
+#     routing, # 作ったルーティング
+# )
 
+# 標準回答　＝＞　終点
+graph_builder.add_edge("node_Others", "node_End")
+
+# プロンプト評価　＝＞　終点
+graph_builder.add_edge("node_Review", "node_End")
+
+# 全体 or グループを限定
 graph_builder.add_conditional_edges(
     "node_Main",
     lambda state: state["message_type"],
@@ -356,7 +396,10 @@ graph_builder.add_conditional_edges(
         "tool02": "node_DataGet",
     },
 )
+# 全体データ取得　＝＞　解析
+graph_builder.add_edge("node_DataGet", "node_Advice")
 
+# 6つのディメンショングループ
 graph_builder.add_conditional_edges(
     "node_Classify",
     lambda state: state["message_type"],
@@ -370,21 +413,25 @@ graph_builder.add_conditional_edges(
     },
 )
 
-# Nodeをedgeに追加
-graph_builder.add_edge("node_Others", "node_End")
-graph_builder.add_edge("node_Review", "node_End")
-
-graph_builder.add_edge("node_DataGet", "node_Advice")
+# ページ関連情報分析　＝＞　解析
 graph_builder.add_edge("node_DataGet_page", "node_Advice")
+# トラフィックソース関連情報分析　＝＞　解析
 graph_builder.add_edge("node_DataGet_traffic", "node_Advice")
+# ユーザー関連情報分析　＝＞　解析
 graph_builder.add_edge("node_DataGet_user", "node_Advice")
+# サイト内検索情報分析　＝＞　解析
 graph_builder.add_edge("node_DataGet_search", "node_Advice")
+# デバイスおよびユーザー属性情報分析　＝＞　解析
 graph_builder.add_edge("node_DataGet_device", "node_Advice")
+# 時間帯関連情報分析　＝＞　解析
 graph_builder.add_edge("node_DataGet_time", "node_Advice")
+
+# 解析　＝＞　終点
 graph_builder.add_edge("node_Advice", "node_End")
 
 # Graphをコンパイル
 graph = graph_builder.compile()
+
 
 ########################
 ########################
