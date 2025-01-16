@@ -116,7 +116,7 @@ def call_Others(llm, user_prompt):
     # Alterboothのシステムプロンプト
     system_prompt_Alterbooth = PromptTemplate(
         input_variables = ['user_prompt'],
-        template = txt_read("resource/rag_data/alterbooth.txt") + "\n\nプロンプト: {user_prompt}"
+        template = txt_read("resource/sys_prompt/specialist.txt") + "\n\nプロンプト: {user_prompt}"
     )
     # チェーンの宣言
     chain = (
@@ -231,13 +231,8 @@ class State(TypedDict):
 #==============
 # Nodeの宣言
 #==============
-# 開始ノード
+# 開始ノード（最初の動作を決める）
 def node_Start(state: State, config: RunnableConfig):
-    # 入力されたメッセージをそのまま次に渡す
-    return {"message": state["message"]}
-
-# 最初の動作を決めるノード
-def node_Select(state: State, config: RunnableConfig):
     prompt = state["message"]
     response = select_What_to_do(llm4, prompt)
     return {"message_type": response.content, "messages": prompt}
@@ -327,7 +322,6 @@ graph_builder = StateGraph(State)
 # Nodeの追加
 #===============
 graph_builder.add_node("node_Start", node_Start)
-graph_builder.add_node("node_Select", node_Select)
 graph_builder.add_node("node_Others", node_Others)
 graph_builder.add_node("node_Review", node_Review)
 graph_builder.add_node("node_Main", node_Main)
@@ -367,7 +361,7 @@ graph_builder.set_entry_point("node_Start")
 
 # 始点　＝＞　標準回答 or プロンプト評価 or ブログ解析
 graph_builder.add_conditional_edges(
-    "node_Select",
+    "node_Start",
     lambda state: state["message_type"],
     {
         "Do01": "node_Others",
